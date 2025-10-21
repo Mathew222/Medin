@@ -4,6 +4,8 @@
 .env.development.local
 .env.test.local
 .env.production.local
+frontend/.env
+backend/.env
 
 # Firebase service account keys (SENSITIVE)
 serviceAccountKey.json
