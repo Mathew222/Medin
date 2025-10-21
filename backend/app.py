@@ -43,7 +43,7 @@ load_dotenv()
 
 # Initialize Flask
 app = Flask(__name__)
-CORS(app, supports_credentials=True) # Allow credentials for session cookies
+CORS(app, supports_credentials=True, origins=["*"]) # Allow all origins for Render deployment
 
 # --- IMPORTANT: Add a Secret Key for Session Management ---
 app.config['SECRET_KEY'] = os.getenv('FLASK_SECRET_KEY', secrets.token_hex(16))
@@ -1034,8 +1034,7 @@ def signin():
 
 if __name__ == "__main__":
     port = int(os.getenv("PORT", 5000))
-    debug_mode = os.getenv("FLASK_DEBUG", "True").lower() == "true"
+    debug_mode = os.getenv("FLASK_DEBUG", "False").lower() == "true"
     logging.info(f"Starting Flask server on port {port} with debug mode: {debug_mode}")
-    # Use host='0.0.0.0' to make it accessible on the local network
-    # For production, use a WSGI server like Gunicorn or Waitress and set debug=False
+    # Use host='0.0.0.0' to make it accessible on Render
     app.run(debug=debug_mode, host='0.0.0.0', port=port)
