@@ -19,7 +19,7 @@ services:
       - key: VITE_FIREBASE_APP_ID
         value: 1:994067816373:web:e8b8f3a3e082dd5bf6c3fc
       - key: VITE_BACKEND_URL
-        value: https://medin-backend.onrender.com
+        value: https://medin.onrender.com
 
   - type: web
     name: medin-backend
