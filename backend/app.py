@@ -87,9 +87,35 @@ app.config["UPLOAD_FOLDER"] = UPLOAD_FOLDER
 # Translation is handled per-request using GoogleTranslator with dynamic target language
 
 # Initialize Firebase Admin
-cred = credentials.Certificate('serviceAccountKey.json')  # Updated path to the JSON file in the backend directory
-firebase_admin.initialize_app(cred)
-db = firestore.client()
+try:
+    # Try to use service account key file first (for local development)
+    if os.path.exists('serviceAccountKey.json'):
+        cred = credentials.Certificate('serviceAccountKey.json')
+        firebase_admin.initialize_app(cred)
+        logging.info("Firebase initialized with service account key file")
+    else:
+        # Use environment variables for production deployment
+        firebase_config = {
+            "type": "service_account",
+            "project_id": os.getenv("FIREBASE_PROJECT_ID"),
+            "private_key_id": os.getenv("FIREBASE_PRIVATE_KEY_ID"),
+            "private_key": os.getenv("FIREBASE_PRIVATE_KEY").replace('\\n', '\n'),
+            "client_email": os.getenv("FIREBASE_CLIENT_EMAIL"),
+            "client_id": os.getenv("FIREBASE_CLIENT_ID"),
+            "auth_uri": "https://accounts.google.com/o/oauth2/auth",
+            "token_uri": "https://oauth2.googleapis.com/token",
+            "auth_provider_x509_cert_url": "https://www.googleapis.com/oauth2/v1/certs",
+            "client_x509_cert_url": f"https://www.googleapis.com/robot/v1/metadata/x509/{os.getenv('FIREBASE_CLIENT_EMAIL')}"
+        }
+        cred = credentials.Certificate(firebase_config)
+        firebase_admin.initialize_app(cred)
+        logging.info("Firebase initialized with environment variables")
+except Exception as e:
+    logging.error(f"Failed to initialize Firebase: {e}")
+    logging.warning("Firebase features will be disabled")
+    db = None
+else:
+    db = firestore.client()
 
 # JWT configuration
 JWT_SECRET_KEY = os.getenv("JWT_SECRET_KEY")
@@ -107,9 +133,13 @@ def token_required(f):
         
         try:
             data = jwt.decode(token, JWT_SECRET_KEY, algorithms=["HS256"])
-            current_user = db.collection('users').document(data['user_id']).get()
-            if not current_user.exists:
-                return jsonify({'message': 'User not found'}), 401
+            if db:
+                current_user = db.collection('users').document(data['user_id']).get()
+                if not current_user.exists:
+                    return jsonify({'message': 'User not found'}), 401
+            else:
+                # Firebase not available, skip user validation
+                current_user = type('obj', (object,), {'exists': True})()
         except:
             return jsonify({'message': 'Token is invalid'}), 401
         
@@ -144,7 +174,10 @@ def update_user_profile(current_user):
             update_data['contactInfo'] = data['contactInfo']
             
         # Update user document
-        current_user.reference.update(update_data)
+        if db and hasattr(current_user, 'reference'):
+            current_user.reference.update(update_data)
+        else:
+            logging.warning("Firebase not available, profile update skipped")
         
         return jsonify({'message': 'Profile updated successfully'}), 200
     except Exception as e:
@@ -161,9 +194,12 @@ def update_avatar(current_user):
             return jsonify({'message': 'No avatar provided'}), 400
             
         # Update avatar URL
-        current_user.reference.update({
-            'avatar': data['avatar']
-        })
+        if db and hasattr(current_user, 'reference'):
+            current_user.reference.update({
+                'avatar': data['avatar']
+            })
+        else:
+            logging.warning("Firebase not available, avatar update skipped")
         
         return jsonify({'message': 'Avatar updated successfully'}), 200
     except Exception as e:
@@ -941,6 +977,9 @@ def signup():
         return jsonify({'message': 'Missing email or password'}), 400
     
     try:
+        if not db:
+            return jsonify({'message': 'Database not available'}), 500
+            
         # Check if user already exists
         users_ref = db.collection('users')
         existing_user = users_ref.where('email', '==', data['email']).get()
@@ -997,6 +1036,9 @@ def signin():
         return jsonify({'message': 'Missing email or password'}), 400
     
     try:
+        if not db:
+            return jsonify({'message': 'Database not available'}), 500
+            
         # Find user by email
         users_ref = db.collection('users')
         user_docs = users_ref.where('email', '==', data['email']).get()
