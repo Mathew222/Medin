@@ -24,10 +24,6 @@ import jwt
 import datetime
 from functools import wraps
 from werkzeug.security import generate_password_hash, check_password_hash
-import firebase_admin
-from firebase_admin import credentials, firestore
-import docx2txt
-import io
 
 # --- Constants ---
 MAX_CHAT_HISTORY_TURNS = 10 # Number of conversation pairs (user + model) to keep
@@ -86,37 +82,6 @@ app.config["UPLOAD_FOLDER"] = UPLOAD_FOLDER
 
 # Translation is handled per-request using GoogleTranslator with dynamic target language
 
-# Initialize Firebase Admin
-try:
-    # Try to use service account key file first (for local development)
-    if os.path.exists('serviceAccountKey.json'):
-        cred = credentials.Certificate('serviceAccountKey.json')
-        firebase_admin.initialize_app(cred)
-        logging.info("Firebase initialized with service account key file")
-    else:
-        # Use environment variables for production deployment
-        firebase_config = {
-            "type": "service_account",
-            "project_id": os.getenv("FIREBASE_PROJECT_ID"),
-            "private_key_id": os.getenv("FIREBASE_PRIVATE_KEY_ID"),
-            "private_key": os.getenv("FIREBASE_PRIVATE_KEY").replace('\\n', '\n'),
-            "client_email": os.getenv("FIREBASE_CLIENT_EMAIL"),
-            "client_id": os.getenv("FIREBASE_CLIENT_ID"),
-            "auth_uri": "https://accounts.google.com/o/oauth2/auth",
-            "token_uri": "https://oauth2.googleapis.com/token",
-            "auth_provider_x509_cert_url": "https://www.googleapis.com/oauth2/v1/certs",
-            "client_x509_cert_url": f"https://www.googleapis.com/robot/v1/metadata/x509/{os.getenv('FIREBASE_CLIENT_EMAIL')}"
-        }
-        cred = credentials.Certificate(firebase_config)
-        firebase_admin.initialize_app(cred)
-        logging.info("Firebase initialized with environment variables")
-except Exception as e:
-    logging.error(f"Failed to initialize Firebase: {e}")
-    logging.warning("Firebase features will be disabled")
-    db = None
-else:
-    db = firestore.client()
-
 # JWT configuration
 JWT_SECRET_KEY = os.getenv("JWT_SECRET_KEY")
 JWT_ACCESS_TOKEN_EXPIRES = datetime.timedelta(days=1)
@@ -124,6 +89,7 @@ JWT_ACCESS_TOKEN_EXPIRES = datetime.timedelta(days=1)
 def token_required(f):
     @wraps(f)
     def decorated(*args, **kwargs):
+        # Simplified token validation without Firebase
         token = None
         if 'Authorization' in request.headers:
             token = request.headers['Authorization'].split(' ')[1]
@@ -133,80 +99,15 @@ def token_required(f):
         
         try:
             data = jwt.decode(token, JWT_SECRET_KEY, algorithms=["HS256"])
-            if db:
-                current_user = db.collection('users').document(data['user_id']).get()
-                if not current_user.exists:
-                    return jsonify({'message': 'User not found'}), 401
-            else:
-                # Firebase not available, skip user validation
-                current_user = type('obj', (object,), {'exists': True})()
+            # Skip Firebase user validation for now
+            current_user = type('obj', (object,), {'exists': True})()
         except:
             return jsonify({'message': 'Token is invalid'}), 401
         
         return f(current_user, *args, **kwargs)
     return decorated
 
-# User profile endpoints
-@app.route('/api/user/profile', methods=['GET'])
-@token_required
-def get_user_profile(current_user):
-    user_data = current_user.to_dict()
-    # Remove sensitive information
-    user_data.pop('password', None)
-    user_data['id'] = current_user.id
-    
-    return jsonify(user_data), 200
-
-@app.route('/api/user/profile', methods=['PUT'])
-@token_required
-def update_user_profile(current_user):
-    try:
-        data = request.json
-        
-        # Update only provided fields
-        update_data = {}
-        
-        if 'name' in data:
-            update_data['name'] = data['name']
-        if 'personalInfo' in data:
-            update_data['personalInfo'] = data['personalInfo']
-        if 'contactInfo' in data:
-            update_data['contactInfo'] = data['contactInfo']
-            
-        # Update user document
-        if db and hasattr(current_user, 'reference'):
-            current_user.reference.update(update_data)
-        else:
-            logging.warning("Firebase not available, profile update skipped")
-        
-        return jsonify({'message': 'Profile updated successfully'}), 200
-    except Exception as e:
-        logging.error(f"Error updating profile: {str(e)}")
-        return jsonify({'message': 'Error updating profile'}), 500
-
-@app.route('/api/user/avatar', methods=['POST'])
-@token_required
-def update_avatar(current_user):
-    try:
-        data = request.json
-        
-        if not data or 'avatar' not in data:
-            return jsonify({'message': 'No avatar provided'}), 400
-            
-        # Update avatar URL
-        if db and hasattr(current_user, 'reference'):
-            current_user.reference.update({
-                'avatar': data['avatar']
-            })
-        else:
-            logging.warning("Firebase not available, avatar update skipped")
-        
-        return jsonify({'message': 'Avatar updated successfully'}), 200
-    except Exception as e:
-        logging.error(f"Error updating avatar: {str(e)}")
-        return jsonify({'message': 'Error updating avatar'}), 500
-
-# -------------------- Utility Functions (Mostly Unchanged) --------------------
+# -------------------- Utility Functions --------------------
 # (preprocess_image, extract_text_from_image, extract_text,
 # parse_gemini_json_response, handle_gemini_error_response,
 # analyze_text_with_gemini, analyze_image_with_gemini, translate_analysis)
@@ -968,107 +869,6 @@ def chat_api():
     except Exception as e:
         logging.exception("❌ Error during chat processing:") # Log full traceback
         return jsonify({"error": f"An unexpected error occurred during chat: {e}"}), 500
-
-@app.route('/api/auth/signup', methods=['POST'])
-def signup():
-    data = request.get_json()
-    
-    if not data or not data.get('email') or not data.get('password'):
-        return jsonify({'message': 'Missing email or password'}), 400
-    
-    try:
-        if not db:
-            return jsonify({'message': 'Database not available'}), 500
-            
-        # Check if user already exists
-        users_ref = db.collection('users')
-        existing_user = users_ref.where('email', '==', data['email']).get()
-        
-        if len(list(existing_user)) > 0:
-            return jsonify({'message': 'User already exists'}), 400
-        
-        # Create new user
-        new_user = {
-            'email': data['email'],
-            'password': generate_password_hash(data['password']),
-            'name': data.get('name', ''),
-            'avatar': None,
-            'role': 'user',
-            'personalInfo': {
-                'dateOfBirth': None,
-                'age': None,
-                'gender': None,
-                'bloodType': None
-            },
-            'contactInfo': {
-                'phone': None,
-                'address': None,
-                'emergencyContact': None
-            },
-            'created_at': firestore.SERVER_TIMESTAMP
-        }
-        
-        # Add user to Firestore
-        user_ref = users_ref.document()
-        user_ref.set(new_user)
-        
-        # Generate token
-        token = jwt.encode({
-            'user_id': user_ref.id,
-            'exp': datetime.datetime.utcnow() + datetime.timedelta(days=1)
-        }, JWT_SECRET_KEY)
-        
-        return jsonify({
-            'message': 'User created successfully',
-            'token': token,
-            'user_id': user_ref.id
-        }), 201
-        
-    except Exception as e:
-        logging.error(f"Error in signup: {str(e)}")
-        return jsonify({'message': 'Error creating user'}), 500
-
-@app.route('/api/auth/signin', methods=['POST'])
-def signin():
-    data = request.get_json()
-    
-    if not data or not data.get('email') or not data.get('password'):
-        return jsonify({'message': 'Missing email or password'}), 400
-    
-    try:
-        if not db:
-            return jsonify({'message': 'Database not available'}), 500
-            
-        # Find user by email
-        users_ref = db.collection('users')
-        user_docs = users_ref.where('email', '==', data['email']).get()
-        
-        user_list = list(user_docs)
-        if not user_list:
-            return jsonify({'message': 'User not found'}), 401
-        
-        user_doc = user_list[0]
-        user_data = user_doc.to_dict()
-        
-        # Check password
-        if not check_password_hash(user_data['password'], data['password']):
-            return jsonify({'message': 'Invalid password'}), 401
-        
-        # Generate token
-        token = jwt.encode({
-            'user_id': user_doc.id,
-            'exp': datetime.datetime.utcnow() + datetime.timedelta(days=1)
-        }, JWT_SECRET_KEY)
-        
-        return jsonify({
-            'message': 'Logged in successfully',
-            'token': token,
-            'user_id': user_doc.id
-        }), 200
-        
-    except Exception as e:
-        logging.error(f"Error in signin: {str(e)}")
-        return jsonify({'message': 'Error during signin'}), 500
 
 # -------------------- Run the Flask App --------------------
 
