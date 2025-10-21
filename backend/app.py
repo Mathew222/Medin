@@ -20,8 +20,6 @@ from PIL import Image
 import secrets # Import secrets for generating a key
 from deep_translator import GoogleTranslator # For translation
 import time # Potentially for translation delays
-from flask_pymongo import PyMongo
-from bson import ObjectId
 import jwt
 import datetime
 from functools import wraps

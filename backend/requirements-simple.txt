@@ -13,6 +13,7 @@ deep-translator==1.11.4
 
 # Document processing
 python-docx==1.1.2
+docx2txt==0.8
 PyPDF2==3.0.1
 pandas==2.2.3
 openpyxl==3.1.2
