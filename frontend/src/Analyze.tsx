@@ -48,7 +48,7 @@ function Analyze({ onBookSpecialist }: AnalyzeProps) {
   const messagesEndRef = useRef<HTMLDivElement | null>(null);
 
   const filePath = localStorage.getItem("filePath") || "";
-  const backendUrl = "http://localhost:5000"; // Define backend URL
+  const backendUrl = import.meta.env.VITE_BACKEND_URL || "http://localhost:5000"; // Define backend URL
 
   const [showBooking, setShowBooking] = useState<boolean>(false);
 

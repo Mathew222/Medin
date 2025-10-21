@@ -167,7 +167,7 @@ function App() {
 
     try {
       // Send user message to backend
-      const response = await fetch("http://localhost:5000/api/chat", {
+      const response = await fetch(`${import.meta.env.VITE_BACKEND_URL || "http://localhost:5000"}/api/chat`, {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
@@ -316,7 +316,7 @@ function App() {
       formData.append("file", file);
   
       try {
-        const response = await fetch("http://127.0.0.1:5000/upload", {
+        const response = await fetch(`${import.meta.env.VITE_BACKEND_URL || "http://localhost:5000"}/upload`, {
           method: "POST",
           body: formData,
         });
